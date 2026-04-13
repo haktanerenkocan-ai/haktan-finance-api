@@ -4,32 +4,42 @@ import os
 from flask import Flask, request
 
 app = Flask(__name__)
-# TLS parmak izini taklit eden motor
-scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
+
+# Kendimizi iPhone 15'ten giren bir kullanıcı gibi tanıtıyoruz
+stealth_options = {
+    'browser': 'chrome',
+    'platform': 'ios',
+    'mobile': True
+}
+scraper = cloudscraper.create_scraper(browser=stealth_options)
 
 @app.route('/fiyat')
 def get_fiyat():
-    kod = request.args.get('kod')
+    kod = request.args.get('kod', '').upper()
     if not kod: return "Kod eksik", 400
     
-    try:
-        url = f"https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod={kod.upper()}"
-        # Tarayıcı taklidini daha da güçlendirelim
-        response = scraper.get(url, timeout=15)
-        
-        # TANI 1: Eğer site bizi blokladıysa durum kodunu görelim
-        if response.status_code != 200:
-            return f"Hata: Site kapıyı kapattı (Durum Kodu: {response.status_code})"
-
-        # TANI 2: Sayfanın içinde fiyat etiketi var mı bakalım
-        match = re.search(r'MainContent_MainContent_LabelLastPrice">([0-9,.]+)<', response.text)
-        
-        if match:
-            fiyat = match.group(1).replace(".", "").replace(",", ".")
-            return fiyat
-        else:
-            # Eğer fiyat bulunamadıysa sayfanın ilk 100 karakterini görelim (Blok sayfası mı?)
-            return f"Hata: Fiyat etiketi bulunamadı. Sayfa içeriği: {response.text[:100]}"
+    # Alternatif kaynak listesi (Eğer biri kapatırsa diğeri denenecek)
+    sources = [
+        f"https://www.doviz.com/fon/{kod}",
+        f"https://finans.mynet.com/yatirimfonlari/{kod}"
+    ]
+    
+    for url in sources:
+        try:
+            # 10 saniye bekleyip veriyi çekmeye çalışıyoruz
+            resp = scraper.get(url, timeout=10)
+            if resp.status_code == 200:
+                # Sayfa içindeki ilk virgüllü sayıya odaklanıyoruz (Genelde fiyattır)
+                # Döviz.com ve Mynet için genel bir regex
+                match = re.search(r'([0-9]+\,[0-9]{4,})', resp.text)
+                if match:
+                    fiyat = match.group(1).replace(",", ".")
+                    return fiyat
+        except:
+            continue
             
-    except Exception as e:
-        return f"Sistem Hatası: {str(e)}"
+    return "Hala engelleniyoruz, lokasyon değiştirmelisin."
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
