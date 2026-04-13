@@ -1,5 +1,8 @@
 import requests
 from datetime import datetime, timedelta
+from flask import Flask, request
+
+app = Flask(__name__)
 
 def fiyat_getir(kod):
     kod = kod.upper().strip()
@@ -10,7 +13,7 @@ def fiyat_getir(kod):
         "Referer": "https://www.tefas.gov.tr/"
     }
 
-    # 1️⃣ Önce en sağlam endpoint (Comparison)
+    # 1️⃣ Comparison endpoint
     try:
         url = "https://www.tefas.gov.tr/api/DB/BindComparisonFundReturns"
         payload = {
@@ -28,7 +31,7 @@ def fiyat_getir(kod):
     except:
         pass
 
-    # 2️⃣ Olmazsa geçmiş veriden çek (7 gün geriye bakar)
+    # 2️⃣ History endpoint (7 gün geriye)
     try:
         url = "https://www.tefas.gov.tr/api/DB/BindHistoryInfo"
 
@@ -52,9 +55,24 @@ def fiyat_getir(kod):
     except:
         pass
 
-    # 3️⃣ Hiçbir şey çalışmazsa
     return 0
 
 
-# TEST
-print(fiyat_getir("AFT"))
+@app.route("/")
+def home():
+    return "API Çalışıyor"
+
+@app.route("/fiyat")
+def fiyat():
+    kod = request.args.get("kod", "")
+    if not kod:
+        return "Kod gir", 400
+
+    sonuc = fiyat_getir(kod)
+    return str(sonuc)
+
+
+if __name__ == "__main__":
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
