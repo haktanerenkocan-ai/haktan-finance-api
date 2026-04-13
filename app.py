@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "FVT API Karargah Online - 3. Cephe!"
+    return "FVT API Karargah Online - Surlar Aşıldı!"
 
 @app.route('/fiyat')
 def get_fiyat():
@@ -16,11 +16,9 @@ def get_fiyat():
     if not kod: 
         return "Kod eksik", 400
     
-    # 3. Cephe: FVT Fon Detay Sayfası
     url = f"https://fvt.com.tr/fonlar/yatirim-fonlari/{kod}"
     
     try:
-        # Yine gerçek bir tarayıcı (Chrome) kılığında sızıyoruz
         scraper = cloudscraper.create_scraper(browser={
             'browser': 'chrome',
             'platform': 'windows',
@@ -33,22 +31,24 @@ def get_fiyat():
             soup = BeautifulSoup(res.text, 'html.parser')
             sayfa_metni = soup.get_text()
             
-            # RADAR SİSTEMİ: Sayfadaki "₺2,768049" formatındaki metinleri arıyoruz
-            # ₺ işaretinden sonra boşluk olsa da olmasa da rakamları ve virgülleri yakalar
-            eslesme = re.search(r'₺\s*(\d+[.,]\d+)', sayfa_metni)
+            # YENİ RADAR: ₺ simgesini boş ver. Fon fiyatının imzasını arıyoruz: 
+            # Birkaç rakam + virgül/nokta + TAM 6 RAKAM (Örn: 2,768049)
+            eslesmeler = re.findall(r'(\d{1,5}[.,]\d{6})', sayfa_metni)
             
-            if eslesme:
-                fiyat = eslesme.group(1) # Sadece rakam kısmını al (Örn: 2,768049)
-                return fiyat.replace(",", ".") # Sistemlerin okuyabilmesi için virgülü noktaya çevir
+            if eslesmeler:
+                # Sayfada 6 haneli birden fazla rakam olabilir, grafiğin tepesindeki ana fiyat genelde ilk sıradadır
+                fiyat = eslesmeler[0] 
+                return fiyat.replace(",", ".")
             else:
-                return f"HATA: {kod} sayfası açıldı ama ₺ formatında bir fiyat sayfada bulunamadı."
+                # Sayfada hiç 6 haneli rakam yoksa, sitenin arka planı boş mu (JavaScript mi) kontrol edelim
+                # Fazla boşlukları temizleyip ilk 300 karakteri karargaha yolla
+                temiz_metin = re.sub(r'\s+', ' ', sayfa_metni).strip()
+                return f"HATA: Fiyat formatı bulunamadı. Sitenin arka planda gördüğü metin şu: {temiz_metin[:300]}..."
                 
         elif res.status_code == 403:
-            return "HATA 403: FVT kalkanları da Render IP'sini tespit edip engelledi!"
-            
+            return "HATA 403: FVT kalkanları Render IP'sini engelledi!"
         elif res.status_code == 404:
             return f"HATA 404: FVT'de {kod} adında bir fon bulunamadı."
-            
         else:
             return f"HATA: FVT sunucusu yanıt vermedi. Durum Kodu: {res.status_code}"
             
