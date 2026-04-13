@@ -17,7 +17,6 @@ def get_fiyat():
     
     url = "https://www.tefas.gov.tr/api/DB/BindHistoryData"
     
-    # Tatil/Hafta sonu boşluğuna düşmemek için sadece bugünü değil, son 7 günü tarıyoruz
     bitis_tarihi = datetime.now()
     baslangic_tarihi = bitis_tarihi - timedelta(days=7)
     
@@ -40,24 +39,24 @@ def get_fiyat():
     }
 
     try:
-        # Oturum başlatıyoruz
         session = requests.Session()
-        
-        # 1. ADIM: Güvenlik çerezlerini (cookie) almak için fonun sayfasına normal bir giriş yapıyoruz
         session.get(f"https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod={kod}", headers={"User-Agent": headers["User-Agent"]}, timeout=10)
         
-        # 2. ADIM: Çerezlerle birlikte arka kapıdan (API) veriyi çekiyoruz
         res = session.post(url, data=payload, headers=headers, timeout=10)
         
         if res.status_code == 200:
-            data = res.json()
-            if data.get("data") and len(data["data"]) > 0:
-                # Veriler tarihe göre sıralı gelir, 0. indeks en güncel fiyattır
-                fiyat = data["data"][0]["FIYAT"]
-                return str(fiyat).replace(",", ".")
-            else:
-                return "HATA: TEFAS veri döndürmedi (Bu tarih aralığında bu fon için veri yok)."
-        
+            # ŞARAPNEL KALKANI: Gelen yanıt gerçekten JSON mu kontrol ediyoruz
+            try:
+                data = res.json()
+                if data.get("data") and len(data["data"]) > 0:
+                    fiyat = data["data"][0]["FIYAT"]
+                    return str(fiyat).replace(",", ".")
+                else:
+                    return "HATA: TEFAS veri döndürmedi (Bu tarih aralığında bu fon için veri yok)."
+            except Exception:
+                # Kod JSON okurken patlarsa, TEFAS'ın yolladığı gizli HTML/Metin yanıtının ilk 200 karakterini yazdırıyoruz
+                return f"HATA: TEFAS API yerine bir web sayfası (Güvenlik Kalkanı) döndürdü. Gelen yanıt: {res.text[:200]}..."
+                
         elif res.status_code == 403:
              return "HATA 403: TEFAS erişimi reddetti. (Güvenlik Duvarı Engeli)"
              
@@ -68,6 +67,5 @@ def get_fiyat():
         return f"SİSTEM HATASI: {str(e)}"
 
 if __name__ == "__main__":
-    # Render'ın atadığı portu dinamik olarak yakalar, lokalde çalıştırırsan 5000 kullanır
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
