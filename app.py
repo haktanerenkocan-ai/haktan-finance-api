@@ -6,7 +6,9 @@ from flask import Flask, request
 app = Flask(__name__)
 # iPhone taklidi yapan, zırh delici motor
 scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'ios', 'mobile': True})
-
+@app.route('/')
+def home():
+    return "Karargah Online! API Calisiyor."
 @app.route('/fiyat')
 def get_fiyat():
     kod = request.args.get('kod', '').upper()
