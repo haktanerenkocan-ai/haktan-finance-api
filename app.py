@@ -34,12 +34,19 @@ def get_fiyat():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
         "X-Requested-With": "XMLHttpRequest",
         "Origin": "https://www.tefas.gov.tr",
-        "Referer": f"https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod={kod}"
+        "Referer": f"https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod={kod}",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" # Ekstra Zırh: Veri formatını netleştirir
     }
 
     try:
-        # Kapıyı çalıyoruz
-        res = requests.post(url, data=payload, headers=headers, timeout=10)
+        # Oturum (Session) başlatıyoruz ki çerezler (cookies) havada kaybolmasın
+        session = requests.Session()
+        
+        # 1. ADIM: Keşif Birliği (Önce normal sayfa ziyareti yapıp güvenlik çerezlerini topluyoruz)
+        session.get(f"https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod={kod}", headers={"User-Agent": headers["User-Agent"]}, timeout=10)
+        
+        # 2. ADIM: Ana Taarruz (Toplanan çerezlerle birlikte POST isteğini gönderiyoruz)
+        res = session.post(url, data=payload, headers=headers, timeout=10)
         
         if res.status_code == 200:
             data = res.json()
