@@ -6,57 +6,49 @@ module.exports = async (req, res) => {
   if (!kod) return res.status(200).send("Kod Eksik");
   const fonKodu = kod.toUpperCase();
 
-  // 1. STRATEJİ: DÖVİZ.COM (Yurt dışı IP'lerine karşı daha esnektir)
+  // STRATEJİ 1: MYNET (Hassas Konumlandırma)
+  try {
+    const mynetUrl = `https://finans.mynet.com/yatirimfonlari/${fonKodu}`;
+    const resp = await axios.get(mynetUrl, { timeout: 4000 });
+    const $ = cheerio.load(resp.data);
+    
+    // Sadece ana fiyat kutusuna odaklan (fn-detail-price)
+    let fiyat = $('.fn-detail-price').find('span').first().text() || 
+                $('.fn-detail-price').text();
+
+    if (fiyat && fiyat.includes(',')) {
+      const temiz = fiyat.trim().split(' ')[0].replace(/\./g, "").replace(",", ".");
+      if (parseFloat(temiz) > 0.0001) return res.status(200).send(temiz);
+    }
+  } catch (e) {}
+
+  // STRATEJİ 2: BLOOMBERG HT (Alternatif Hedef)
+  try {
+    const bloombergUrl = `https://www.bloomberght.com/yatirim-fonlari/fon-detay/${fonKodu}`;
+    const resp = await axios.get(bloombergUrl, { timeout: 4000 });
+    const $ = cheerio.load(resp.data);
+    
+    // class="value" olan ama "lastPrice" ile ilişkili olanı çek
+    let fiyat = $('span[class*="value"]').first().text();
+    
+    if (fiyat && fiyat.includes(',')) {
+      const temiz = fiyat.trim().replace(/\./g, "").replace(",", ".");
+      if (parseFloat(temiz) > 0.0001) return res.status(200).send(temiz);
+    }
+  } catch (e) {}
+
+  // STRATEJİ 3: DOVIZ.COM (Hızlı Sızma)
   try {
     const dovizUrl = `https://www.doviz.com/fon/${fonKodu}`;
-    const resp = await axios.get(dovizUrl, {
-      timeout: 5000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0' }
-    });
+    const resp = await axios.get(dovizUrl, { timeout: 4000 });
     const $ = cheerio.load(resp.data);
     let fiyat = $('.value').first().text();
     
     if (fiyat && fiyat.includes(',')) {
       const temiz = fiyat.trim().replace(/\./g, "").replace(",", ".");
-      if (!isNaN(parseFloat(temiz))) return res.status(200).send(temiz);
+      if (parseFloat(temiz) > 0.0001) return res.status(200).send(temiz);
     }
-  } catch (e) {
-    console.log("Döviz.com sızması başarısız.");
-  }
+  } catch (e) {}
 
-  // 2. STRATEJİ: ZİRAAT PORTFÖY (Resmi ama bazen filtreleri gevşektir)
-  try {
-    const ziraatUrl = `https://www.ziraatportfoy.com.tr/tr/fonlar/${fonKodu}`;
-    const resp = await axios.get(ziraatUrl, { timeout: 5000 });
-    const $ = cheerio.load(resp.data);
-    // Sayfa içinde fiyatın geçtiği yeri bulmaya çalışıyoruz
-    let fiyat = $('span:contains(","), div:contains(",")').filter(function() {
-      return $(this).text().match(/^[0-9]+,[0-9]+$/);
-    }).first().text();
-
-    if (fiyat) {
-      const temiz = fiyat.trim().replace(/\./g, "").replace(",", ".");
-      return res.status(200).send(temiz);
-    }
-  } catch (e) {
-    console.log("Ziraat sızması başarısız.");
-  }
-
-  // 3. STRATEJİ: "NÜKLEER SEÇENEK" - Google Search Snippet
-  // Google üzerinden fiyatı çekmeye çalışıyoruz (Google Google'ı engellemez!)
-  try {
-    const googleUrl = `https://www.google.com/search?q=${fonKodu}+fon+fiyatı+tefas`;
-    const resp = await axios.get(googleUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)' }
-    });
-    const html = resp.data;
-    const match = html.match(/([0-9]+\,[0-9]{4,})/); // "1,2345" gibi formatı arar
-    if (match) {
-      return res.status(200).send(match[1].replace(",", "."));
-    }
-  } catch (e) {
-    console.log("Google sızması başarısız.");
-  }
-
-  res.status(200).send("Karargah: Tüm kaynaklar kilitli!");
+  res.status(200).send("Veri Bulunamadı");
 };
