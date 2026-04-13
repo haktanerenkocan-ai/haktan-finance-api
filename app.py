@@ -1,13 +1,15 @@
-import requests
 import os
+import json
+import re
+import cloudscraper
+from bs4 import BeautifulSoup
 from flask import Flask, request
-from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "TEFAS API Karargah Online!"
+    return "Fintables API Karargah Online - Cephe Değiştirildi!"
 
 @app.route('/fiyat')
 def get_fiyat():
@@ -15,53 +17,56 @@ def get_fiyat():
     if not kod: 
         return "Kod eksik", 400
     
-    url = "https://www.tefas.gov.tr/api/DB/BindHistoryData"
+    # Yeni Hedef: Fintables Fon Detay Sayfası
+    url = f"https://fintables.com/fonlar/{kod}"
     
-    bitis_tarihi = datetime.now()
-    baslangic_tarihi = bitis_tarihi - timedelta(days=7)
-    
-    payload = {
-        "fontip": "YAT",
-        "sfontip": "YAT",
-        "fongrup": "",
-        "fonkod": kod,
-        "bastarih": baslangic_tarihi.strftime("%d.%m.%Y"),
-        "bittarih": bitis_tarihi.strftime("%d.%m.%Y"),
-        "isin": ""
-    }
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "X-Requested-With": "XMLHttpRequest",
-        "Origin": "https://www.tefas.gov.tr",
-        "Referer": f"https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod={kod}",
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"
-    }
-
     try:
-        session = requests.Session()
-        session.get(f"https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod={kod}", headers={"User-Agent": headers["User-Agent"]}, timeout=10)
+        # Fintables'ın Cloudflare korumasını aşmak için yine Cloudscraper kullanıyoruz
+        scraper = cloudscraper.create_scraper(browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        })
         
-        res = session.post(url, data=payload, headers=headers, timeout=10)
+        # Sayfaya taarruz
+        res = scraper.get(url, timeout=15)
         
         if res.status_code == 200:
-            # ŞARAPNEL KALKANI: Gelen yanıt gerçekten JSON mu kontrol ediyoruz
-            try:
-                data = res.json()
-                if data.get("data") and len(data["data"]) > 0:
-                    fiyat = data["data"][0]["FIYAT"]
-                    return str(fiyat).replace(",", ".")
-                else:
-                    return "HATA: TEFAS veri döndürmedi (Bu tarih aralığında bu fon için veri yok)."
-            except Exception:
-                # Kod JSON okurken patlarsa, TEFAS'ın yolladığı gizli HTML/Metin yanıtının ilk 200 karakterini yazdırıyoruz
-                return f"HATA: TEFAS API yerine bir web sayfası (Güvenlik Kalkanı) döndürdü. Gelen yanıt: {res.text[:200]}..."
+            # HTML'i parçalamak için BeautifulSoup'u devreye sokuyoruz
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            # Fintables verileri sayfanın içindeki gizli bir script etiketinde tutar (__NEXT_DATA__)
+            # Bu etiketi bulup içindeki JSON verisini avlıyoruz
+            script_tag = soup.find('script', id='__NEXT_DATA__')
+            
+            if script_tag:
+                try:
+                    # JSON verisini sözlüğe çevir
+                    data = json.loads(script_tag.string)
+                    
+                    # Fintables'ın veri labirentinde fiyatın bulunduğu odaya iniyoruz
+                    # Not: Bu yol Fintables'ın veri yapısına göredir
+                    fon_detaylari = data.get('props', {}).get('pageProps', {}).get('fund', {})
+                    fiyat = fon_detaylari.get('price')
+                    
+                    if fiyat:
+                        return str(fiyat).replace(",", ".")
+                    else:
+                        return f"HATA: {kod} fonu bulundu ama fiyat verisi okunamadı."
+                        
+                except Exception as e:
+                    return f"HATA: Veri ayrıştırma başarısız. (JSON Hatası) - {str(e)}"
+            else:
+                return "HATA: Fintables sayfa yapısını değiştirmiş, hedef veri paketi bulunamadı."
                 
+        elif res.status_code == 404:
+            return f"HATA 404: Fintables'ta {kod} adında bir fon bulunamadı."
+            
         elif res.status_code == 403:
-             return "HATA 403: TEFAS erişimi reddetti. (Güvenlik Duvarı Engeli)"
-             
+            return "HATA 403: Fintables da Render IP'sini engelledi! (Cloudflare WAF)"
+            
         else:
-            return f"HATA: TEFAS sunucusu yanıt vermedi. Durum Kodu: {res.status_code}"
+            return f"HATA: Fintables sunucusu yanıt vermedi. Durum Kodu: {res.status_code}"
             
     except Exception as e:
         return f"SİSTEM HATASI: {str(e)}"
