@@ -1,47 +1,52 @@
 const axios = require('axios');
-const cheerio = require('cheerio');
 
 module.exports = async (req, res) => {
   const { kod } = req.query;
   if (!kod) return res.status(200).send("Kod Eksik");
-
   const fonKodu = kod.toUpperCase();
-  
-  // 1. STRATEJİ: MYNET FİNANS (Vercel IP'lerine genelde daha nazik davranır)
-  try {
-    const mynetUrl = `https://finans.mynet.com/yatirimfonlari/${fonKodu}`;
-    const response = await axios.get(mynetUrl, {
-      timeout: 4000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' }
-    });
-    
-    const $ = cheerio.load(response.data);
-    // Mynet'teki fiyat etiketini yakalıyoruz
-    let fiyat = $('.fn-detail-price').first().text() || $('.flex.items-center span').eq(1).text();
-    
-    if (fiyat && fiyat.length > 2) {
-      const temizFiyat = fiyat.trim().replace(/\./g, "").replace(",", ".");
-      if(!isNaN(parseFloat(temizFiyat))) return res.status(200).send(temizFiyat);
+
+  // Denenecek Kaynaklar ve URL Yapıları
+  const kaynaklar = [
+    {
+      name: 'Mynet',
+      url: `https://finans.mynet.com/yatirimfonlari/fon-detay/${fonKodu}/`,
+      regex: /"lastPrice":\s*"([0-9,.]+)"/  // JSON verisinden yakalamaya çalışır
+    },
+    {
+      name: 'Bloomberg',
+      url: `https://www.bloomberght.com/yatirim-fonlari/fon-detay/${fonKodu}`,
+      regex: /class="value[^"]*">([0-9,.]+)</
+    },
+    {
+      name: 'TEFAS_Alternatif',
+      url: `https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod=${fonKodu}`,
+      regex: /MainContent_MainContent_LabelLastPrice">([0-9,.]+)</
     }
-  } catch (e) {
-    console.log("Mynet denemesi başarısız.");
+  ];
+
+  for (let kaynak of kaynaklar) {
+    try {
+      const response = await axios.get(kaynak.url, {
+        timeout: 5000,
+        headers: { 
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
+          'Accept-Language': 'tr-TR,tr;q=0.9'
+        }
+      });
+
+      const html = response.data;
+      const match = html.match(kaynak.regex);
+
+      if (match && match[1]) {
+        const temizFiyat = match[1].trim().replace(/\./g, "").replace(",", ".");
+        if (!isNaN(parseFloat(temizFiyat)) && parseFloat(temizFiyat) > 0) {
+          return res.status(200).send(temizFiyat);
+        }
+      }
+    } catch (e) {
+      console.log(`${kaynak.name} denemesi başarısız.`);
+    }
   }
 
-  // 2. STRATEJİ: BLOOMBERG HT (Yedek)
-  try {
-    const bloombergUrl = `https://www.bloomberght.com/yatirim-fonlari/fon-detay/${fonKodu}`;
-    const response = await axios.get(bloombergUrl, { timeout: 4000 });
-    const $ = cheerio.load(response.data);
-    let fiyat = $('span.value.lastPrice').text();
-    
-    if (fiyat) {
-      const temizFiyat = fiyat.trim().replace(/\./g, "").replace(",", ".");
-      if(!isNaN(parseFloat(temizFiyat))) return res.status(200).send(temizFiyat);
-    }
-  } catch (e) {
-    console.log("Bloomberg denemesi başarısız.");
-  }
-
-  // Her şey patlarsa
   res.status(200).send("Veri Bulunamadı");
 };
