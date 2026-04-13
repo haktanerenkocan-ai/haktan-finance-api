@@ -10,23 +10,26 @@ scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 
 @app.route('/fiyat')
 def get_fiyat():
     kod = request.args.get('kod')
-    if not kod:
-        return "Kod eksik", 400
+    if not kod: return "Kod eksik", 400
     
     try:
         url = f"https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod={kod.upper()}"
+        # Tarayıcı taklidini daha da güçlendirelim
         response = scraper.get(url, timeout=15)
         
-        if response.status_code == 200:
-            match = re.search(r'MainContent_MainContent_LabelLastPrice">([0-9,.]+)<', response.text)
-            if match:
-                fiyat = match.group(1).replace(".", "").replace(",", ".")
-                return fiyat
-        return "0"
-    except Exception:
-        return "0"
+        # TANI 1: Eğer site bizi blokladıysa durum kodunu görelim
+        if response.status_code != 200:
+            return f"Hata: Site kapıyı kapattı (Durum Kodu: {response.status_code})"
 
-if __name__ == "__main__":
-    # Render'ın verdiği portu otomatik yakalar
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+        # TANI 2: Sayfanın içinde fiyat etiketi var mı bakalım
+        match = re.search(r'MainContent_MainContent_LabelLastPrice">([0-9,.]+)<', response.text)
+        
+        if match:
+            fiyat = match.group(1).replace(".", "").replace(",", ".")
+            return fiyat
+        else:
+            # Eğer fiyat bulunamadıysa sayfanın ilk 100 karakterini görelim (Blok sayfası mı?)
+            return f"Hata: Fiyat etiketi bulunamadı. Sayfa içeriği: {response.text[:100]}"
+            
+    except Exception as e:
+        return f"Sistem Hatası: {str(e)}"
