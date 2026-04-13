@@ -3,28 +3,40 @@ const cheerio = require('cheerio');
 
 module.exports = async (req, res) => {
   const { kod } = req.query;
-  if (!kod) return res.status(400).send("Fon kodu eksik!");
+  if (!kod) return res.status(200).send("Kod Eksik");
+
+  // Birinci hedef: TEFAS Analiz Sayfası (Daha az korumalı olabilir)
+  const url = `https://www.tefas.gov.tr/FonAnaliz.aspx?FonKod=${kod.toUpperCase()}`;
 
   try {
-    // Takasbank'a ajan girişi yapıyoruz
-    const url = `https://tefas.takasbank.com.tr/tr/fon-analiz?fonkod=${kod.toUpperCase()}`;
     const { data } = await axios.get(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+      timeout: 5000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Referer': 'https://www.google.com/',
+        'Cache-Control': 'no-cache'
+      }
     });
-    
+
     const $ = cheerio.load(data);
     
-    // Fiyatı HTML içinden söküp alıyoruz
-    const fiyat = $('#MainContent_MainContent_LabelLastPrice').text() || 
-                  $('.font-weight-bold').first().text();
-    
-    if (!fiyat) throw new Error("Fiyat bulunamadı");
+    // TEFAS'ın içinden fiyatı söküyoruz (Farklı etiketleri deniyoruz)
+    let fiyat = $('.top-list li span').first().text() || 
+                $('#MainContent_MainContent_LabelLastPrice').text() ||
+                $('.font-weight-bold').text();
 
-    // "1.234,56" formatını "1234.56" sayı formatına çevir
+    if (!fiyat || fiyat.length < 2) {
+       return res.status(200).send("0");
+    }
+
+    // "1.234,5678" -> "1234.5678"
     const temizFiyat = fiyat.trim().replace(/\./g, "").replace(",", ".");
-    
     res.status(200).send(temizFiyat);
-  } catch (e) {
-    res.status(200).send("0"); // Hata olursa 0 döner ki tablo patlamasın
+
+  } catch (error) {
+    // Hata durumunda nedenini anlamak için 0 yerine bir hata kodu gönderelim (Geçici olarak)
+    res.status(200).send("Veri Çekilemedi"); 
   }
 };
