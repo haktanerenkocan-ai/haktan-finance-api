@@ -1,5 +1,4 @@
 import os
-import json
 import re
 import cloudscraper
 from bs4 import BeautifulSoup
@@ -9,7 +8,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Fintables API Karargah Online - Cephe Değiştirildi!"
+    return "FVT API Karargah Online - 3. Cephe!"
 
 @app.route('/fiyat')
 def get_fiyat():
@@ -17,56 +16,41 @@ def get_fiyat():
     if not kod: 
         return "Kod eksik", 400
     
-    # Yeni Hedef: Fintables Fon Detay Sayfası
-    url = f"https://fintables.com/fonlar/{kod}"
+    # 3. Cephe: FVT Fon Detay Sayfası
+    url = f"https://fvt.com.tr/fonlar/yatirim-fonlari/{kod}"
     
     try:
-        # Fintables'ın Cloudflare korumasını aşmak için yine Cloudscraper kullanıyoruz
+        # Yine gerçek bir tarayıcı (Chrome) kılığında sızıyoruz
         scraper = cloudscraper.create_scraper(browser={
             'browser': 'chrome',
             'platform': 'windows',
             'desktop': True
         })
         
-        # Sayfaya taarruz
         res = scraper.get(url, timeout=15)
         
         if res.status_code == 200:
-            # HTML'i parçalamak için BeautifulSoup'u devreye sokuyoruz
             soup = BeautifulSoup(res.text, 'html.parser')
+            sayfa_metni = soup.get_text()
             
-            # Fintables verileri sayfanın içindeki gizli bir script etiketinde tutar (__NEXT_DATA__)
-            # Bu etiketi bulup içindeki JSON verisini avlıyoruz
-            script_tag = soup.find('script', id='__NEXT_DATA__')
+            # RADAR SİSTEMİ: Sayfadaki "₺2,768049" formatındaki metinleri arıyoruz
+            # ₺ işaretinden sonra boşluk olsa da olmasa da rakamları ve virgülleri yakalar
+            eslesme = re.search(r'₺\s*(\d+[.,]\d+)', sayfa_metni)
             
-            if script_tag:
-                try:
-                    # JSON verisini sözlüğe çevir
-                    data = json.loads(script_tag.string)
-                    
-                    # Fintables'ın veri labirentinde fiyatın bulunduğu odaya iniyoruz
-                    # Not: Bu yol Fintables'ın veri yapısına göredir
-                    fon_detaylari = data.get('props', {}).get('pageProps', {}).get('fund', {})
-                    fiyat = fon_detaylari.get('price')
-                    
-                    if fiyat:
-                        return str(fiyat).replace(",", ".")
-                    else:
-                        return f"HATA: {kod} fonu bulundu ama fiyat verisi okunamadı."
-                        
-                except Exception as e:
-                    return f"HATA: Veri ayrıştırma başarısız. (JSON Hatası) - {str(e)}"
+            if eslesme:
+                fiyat = eslesme.group(1) # Sadece rakam kısmını al (Örn: 2,768049)
+                return fiyat.replace(",", ".") # Sistemlerin okuyabilmesi için virgülü noktaya çevir
             else:
-                return "HATA: Fintables sayfa yapısını değiştirmiş, hedef veri paketi bulunamadı."
+                return f"HATA: {kod} sayfası açıldı ama ₺ formatında bir fiyat sayfada bulunamadı."
                 
-        elif res.status_code == 404:
-            return f"HATA 404: Fintables'ta {kod} adında bir fon bulunamadı."
-            
         elif res.status_code == 403:
-            return "HATA 403: Fintables da Render IP'sini engelledi! (Cloudflare WAF)"
+            return "HATA 403: FVT kalkanları da Render IP'sini tespit edip engelledi!"
+            
+        elif res.status_code == 404:
+            return f"HATA 404: FVT'de {kod} adında bir fon bulunamadı."
             
         else:
-            return f"HATA: Fintables sunucusu yanıt vermedi. Durum Kodu: {res.status_code}"
+            return f"HATA: FVT sunucusu yanıt vermedi. Durum Kodu: {res.status_code}"
             
     except Exception as e:
         return f"SİSTEM HATASI: {str(e)}"
