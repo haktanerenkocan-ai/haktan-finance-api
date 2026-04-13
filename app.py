@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 app = Flask(__name__)
 
 def get_fvt_data(kod):
-    """FVT API'den son 30 günlük veriyi çeken yardımcı fonksiyon"""
     bugun = datetime.now()
     baslangic = (bugun - timedelta(days=30)).strftime("%Y-%m-%d")
     bitis = bugun.strftime("%Y-%m-%d")
@@ -22,7 +21,7 @@ def get_fvt_data(kod):
 
 @app.route('/')
 def home():
-    return "Karargah API Online - Tüm Hatlar Aktif!"
+    return "Karargah API Online - Matematiksel Düzeltme Hattı!"
 
 @app.route('/fiyat')
 def get_fiyat():
@@ -40,7 +39,9 @@ def get_degisim():
     if not kod: return "0"
     veri = get_fvt_data(kod)
     if veri and veri.get("success") and len(veri["data"]) > 0:
-        getiri = veri["data"][-1]["getiri"]
+        # KRİTİK DÜZELTME: Gelen 0.328 değerini 100'e bölerek 0.00328 yapıyoruz
+        getiri = float(veri["data"][-1]["getiri"]) / 100
+        # Google Tablolar'ın anlaması için virgüle çevirip tırnaklıyoruz
         return f'"{str(getiri).replace(".", ",")}"'
     return "0"
 
