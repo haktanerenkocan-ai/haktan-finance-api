@@ -1,74 +1,108 @@
 import os
 from flask import Flask, request, jsonify
-from datetime import datetime, timedelta
-from tefas import Crawler
-import pandas as pd
+import cloudscraper
 
 app = Flask(__name__)
-crawler = Crawler()
+
+def get_tefas_data():
+    # Cloudscraper, TEFAS'ın bot korumasını aşmak için kendini gerçek bir Chrome gibi gösterir
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'windows',
+            'desktop': True
+        }
+    )
+    
+    # Haktan'ın deşifre ettiği TEFAS JSON parametreleri
+    payload = {
+        "calismaTipi": 2,
+        "dil": "TR",
+        "fonTipi": "YAT",
+        "islem": 1,
+        "donemGetiri1a": "1",
+        "donemGetiri1y": "1",
+        "donemGetiri3a": "1",
+        "donemGetiri3y": "1",
+        "donemGetiri5y": "1",
+        "donemGetiri6a": "1",
+        "donemGetiriyb": "1",
+        "fonGrubu": None,
+        "fonTurAciklama": None,
+        "fonTurKod": None,
+        "kurucuKodu": None,
+        "sfonTurKod": None,
+        "basTarih": None,
+        "bitTarih": None
+    }
+
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": "https://www.tefas.gov.tr",
+        "Referer": "https://www.tefas.gov.tr/fon-getirileri"
+    }
+
+    try:
+        # Önce anasayfaya gidip giriş biletimizi (Cookie) alıyoruz
+        scraper.get("https://www.tefas.gov.tr/fon-getirileri", timeout=10)
+        
+        # Sonra senin bulduğun o büyük veritabanı uç noktasına JSON yükümüzü ateşliyoruz
+        res = scraper.post("https://www.tefas.gov.tr/api/funds/fonGetiriBaziBilgiGetir", json=payload, headers=headers, timeout=15)
+        
+        if res.status_code == 200:
+            return res.json()
+    except Exception as e:
+        print("Cloudscraper Engeli:", str(e))
+        
+    return None
 
 @app.route('/')
 def home():
-    return "Karargah TEFAS Crawler Kütüphanesi Canlı!"
-
-def get_tefas_verisi(kodlar):
-    bugun = datetime.now()
-    # Hafta sonu ve tatil boşluklarını kapatmak için son 7 günü çekiyoruz
-    baslangic = (bugun - timedelta(days=7)).strftime("%Y-%m-%d")
-    bitis = bugun.strftime("%Y-%m-%d")
-    
-    sonuclar_fiyat = {}
-    sonuclar_degisim = {}
-    
-    try:
-        # TEFAS kütüphanesi tüm bağlantıları, çerezleri ve tablo yapısını kendisi çözer
-        df = crawler.fetch(start_date=baslangic, end_date=bitis, name=kodlar, columns=["code", "date", "price", "daily_return"])
-        
-        if df is not None and not df.empty:
-            # Gelen veriyi tarihe göre sıralıyoruz (En güncel fiyat en sonda kalsın)
-            df['date'] = pd.to_datetime(df['date'])
-            df = df.sort_values(by='date', ascending=True)
-            
-            for kod in kodlar:
-                # Sadece ilgili fonun geçmişini al
-                fon_df = df[df['code'] == kod]
-                if not fon_df.empty:
-                    son_kayit = fon_df.iloc[-1] # En güncel günün satırı
-                    sonuclar_fiyat[kod] = float(son_kayit['price'])
-                    sonuclar_degisim[kod] = float(son_kayit['daily_return']) / 100
-                else:
-                    sonuclar_fiyat[kod] = 0.0
-                    sonuclar_degisim[kod] = 0.0
-        else:
-            for kod in kodlar:
-                sonuclar_fiyat[kod] = 0.0
-                sonuclar_degisim[kod] = 0.0
-                
-    except Exception as e:
-        print("Crawler Hatası:", str(e))
-        for kod in kodlar:
-            sonuclar_fiyat[kod] = 0.0
-            sonuclar_degisim[kod] = 0.0
-            
-    return sonuclar_fiyat, sonuclar_degisim
+    return "Karargah Cloudscraper Modülü Çevrimiçi!"
 
 @app.route('/toplu_fiyat')
 def get_toplu_fiyat():
     kodlar_str = request.args.get('kodlar', '').upper()
     if not kodlar_str: return jsonify({})
-    kod_listesi = [k.strip() for k in kodlar_str.split(',') if k.strip()]
     
-    fiyatlar, _ = get_tefas_verisi(kod_listesi)
-    return jsonify(fiyatlar)
+    kod_listesi = [k.strip() for k in kodlar_str.split(',') if k.strip()]
+    sonuclar = {kod: 0 for kod in kod_listesi}
+    
+    veri = get_tefas_data()
+    if veri and isinstance(veri, list):
+        for fon in veri:
+            fon_kodu = fon.get("FONKODU", "").upper().strip()
+            if fon_kodu in sonuclar:
+                try:
+                    fiyat_str = str(fon.get("FIYAT", "0")).replace(",", ".")
+                    sonuclar[fon_kodu] = float(fiyat_str)
+                except:
+                    sonuclar[fon_kodu] = 0
+                    
+    return jsonify(sonuclar)
 
 @app.route('/toplu_degisim')
 def get_toplu_degisim():
     kodlar_str = request.args.get('kodlar', '').upper()
     if not kodlar_str: return jsonify({})
-    kod_listesi = [k.strip() for k in kodlar_str.split(',') if k.strip()]
     
-    _, degisimler = get_tefas_verisi(kod_listesi)
-    return jsonify(degisimler)
+    kod_listesi = [k.strip() for k in kodlar_str.split(',') if k.strip()]
+    sonuclar = {kod: 0.0 for kod in kod_listesi}
+    
+    veri = get_tefas_data()
+    if veri and isinstance(veri, list):
+        for fon in veri:
+            fon_kodu = fon.get("FONKODU", "").upper().strip()
+            if fon_kodu in sonuclar:
+                try:
+                    degisim_str = str(fon.get("GUNLUKGETIRI", fon.get("GETIRI1G", "0"))).replace(",", ".")
+                    sonuclar[fon_kodu] = float(degisim_str) / 100
+                except:
+                    sonuclar[fon_kodu] = 0.0
+                    
+    return jsonify(sonuclar)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
