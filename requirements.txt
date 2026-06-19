@@ -1,6 +1,4 @@
 flask
-requests
-cloudscraper
-curl_cffi
-fake-useragent
 gunicorn
+pandas
+pytefas
