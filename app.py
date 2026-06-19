@@ -1,47 +1,63 @@
 import os
 from flask import Flask, request, jsonify
-from datetime import datetime, timedelta
-import cloudscraper
+from curl_cffi import requests
+from fake_useragent import UserAgent
 
 app = Flask(__name__)
+ua = UserAgent()
 
-def get_fvt_data(kod):
-    bugun = datetime.now()
-    baslangic = (bugun - timedelta(days=10)).strftime("%Y-%m-%d")
-    bitis = bugun.strftime("%Y-%m-%d")
-    url = f"https://fvt.com.tr/api/funds/{kod}/prices?baslangic={baslangic}&bitis={bitis}"
+def get_tefas_data():
+    # Cloudflare'i kör eden asıl uç nokta
+    url = "https://www.tefas.gov.tr/api/funds/fonGetiriBazliBilgiGetir"
     
-    # Cloudscraper ile kendimizi gerçek bir Chrome tarayıcısı gibi gösteriyoruz
-    scraper = cloudscraper.create_scraper(
-        browser={
-            'browser': 'chrome',
-            'platform': 'windows',
-            'desktop': True
-        }
-    )
-    
-    # FVT'yi ikna edecek ekstra insan başlıkları
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Origin": "https://fvt.com.tr",
-        "Referer": f"https://fvt.com.tr/fonlar/yatirim-fonlari/{kod}"
+    # Haktan'ın deşifre ettiği kusursuz TEFAS parametreleri
+    payload = {
+        "calismaTipi": 2,
+        "dil": "TR",
+        "fonTipi": "YAT",
+        "islem": 1,
+        "donemGetiri1a": "1",
+        "donemGetiri1y": "1",
+        "donemGetiri3a": "1",
+        "donemGetiri3y": "1",
+        "donemGetiri5y": "1",
+        "donemGetiri6a": "1",
+        "donemGetiriyb": "1",
+        "fonGrubu": None,
+        "fonTurAciklama": None,
+        "fonTurKod": None,
+        "kurucuKodu": None,
+        "sfonTurKod": None,
+        "basTarih": None,
+        "bitTarih": None
     }
-    
+
+    # Her istekte farklı bir tarayıcı gibi davranıyoruz
+    headers = {
+        "User-Agent": ua.chrome,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": "https://www.tefas.gov.tr",
+        "Referer": "https://www.tefas.gov.tr/fon-getirileri"
+    }
+
     try:
-        # FVT sunucularına hayalet isteğimizi atıyoruz
-        res = scraper.get(url, headers=headers, timeout=15)
+        # impersonate="chrome110" komutu, Render sunucusunun kimliğini gerçek bir Chrome'a dönüştürür.
+        res = requests.post(url, json=payload, headers=headers, impersonate="chrome110", timeout=15)
+        
         if res.status_code == 200:
             return res.json()
         else:
-            print(f"FVT Engeli veya Hatası: {res.status_code} - {kod}")
+            print(f"TEFAS Engeli: {res.status_code}")
     except Exception as e:
-        print(f"Bağlantı Hatası ({kod}): {str(e)}")
+        print("Bypass Hatası:", str(e))
         
     return None
 
 @app.route('/')
 def home():
-    return "Karargah FVT (Cloudscraper) Modülü Çevrimiçi!"
+    return "Karargah V4.3 Ultimate Bypass Modülü Aktif!"
 
 @app.route('/toplu_fiyat')
 def get_toplu_fiyat():
@@ -51,11 +67,17 @@ def get_toplu_fiyat():
     kod_listesi = [k.strip() for k in kodlar_str.split(',') if k.strip()]
     sonuclar = {kod: 0 for kod in kod_listesi}
     
-    for kod in kod_listesi:
-        veri = get_fvt_data(kod)
-        if veri and veri.get("success") and len(veri["data"]) > 0:
-            sonuclar[kod] = float(veri["data"][-1]["fiyat"])
-            
+    veri = get_tefas_data()
+    if veri and isinstance(veri, list):
+        for fon in veri:
+            fon_kodu = fon.get("FONKODU", "").upper().strip()
+            if fon_kodu in sonuclar:
+                try:
+                    fiyat_str = str(fon.get("FIYAT", "0")).replace(",", ".")
+                    sonuclar[fon_kodu] = float(fiyat_str)
+                except:
+                    sonuclar[fon_kodu] = 0
+                    
     return jsonify(sonuclar)
 
 @app.route('/toplu_degisim')
@@ -66,12 +88,17 @@ def get_toplu_degisim():
     kod_listesi = [k.strip() for k in kodlar_str.split(',') if k.strip()]
     sonuclar = {kod: 0.0 for kod in kod_listesi}
     
-    for kod in kod_listesi:
-        veri = get_fvt_data(kod)
-        if veri and veri.get("success") and len(veri["data"]) > 0:
-            getiri = float(veri["data"][-1]["getiri"]) / 100
-            sonuclar[kod] = getiri
-            
+    veri = get_tefas_data()
+    if veri and isinstance(veri, list):
+        for fon in veri:
+            fon_kodu = fon.get("FONKODU", "").upper().strip()
+            if fon_kodu in sonuclar:
+                try:
+                    degisim_str = str(fon.get("GUNLUKGETIRI", fon.get("GETIRI1G", "0"))).replace(",", ".")
+                    sonuclar[fon_kodu] = float(degisim_str) / 100
+                except:
+                    sonuclar[fon_kodu] = 0.0
+                    
     return jsonify(sonuclar)
 
 if __name__ == "__main__":
