@@ -1,56 +1,73 @@
 import os
 import requests
 from flask import Flask, request, jsonify
-from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-TEFAS_API_URL = "https://www.tefas.gov.tr/api/funds/fonGnlBlgSiraliGetir"
+# Senin bulduğun gerçek TEFAS uç noktası!
+TEFAS_API_URL = "https://www.tefas.gov.tr/api/funds/fonGetiriBaziBilgiGetir"
 
 def get_tefas_data():
-    """
-    TEFAS resmi API'sinden veri çeker. 
-    Eğer bugün için veri yoksa (hafta sonu/akşam saatleri), 
-    en son geçerli güne kadar geriye doğru tarar.
-    """
+    # requests.Session() kullanarak tarayıcı gibi davranıyoruz (Çerezleri otomatik hafızada tutar)
+    session = requests.Session()
+    
+    # 1. AŞAMA: Kimlik Gizleme ve Taze Cookie (Çerez) Alma
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Origin": "https://www.tefas.gov.tr",
-        "Referer": "https://www.tefas.gov.tr/",
-        "X-Requested-With": "XMLHttpRequest"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"
     }
     
-    # Bugün dahil son 5 günü kontrol et (Hafta sonları ve tatiller için koruma)
-    for i in range(5):
-        hedef_tarih = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-        
-        payload = {
-            "islemDurum": "1",
-            "tarih": hedef_tarih,
-            "fonTipi": "YAT",
-            "fonturId": "",
-            "baskaFonKodu": ""
-        }
-        
-        try:
-            # Hem data (Form-URLencoded) hem json olarak TEFAS'ın esnekliğine uyması için gönderiyoruz
-            res = requests.post(TEFAS_API_URL, data=payload, headers=headers, timeout=10)
-            if res.status_code == 200:
-                veri = res.json()
-                # Eğer gelen liste boş değilse, geçerli veriyi bulduk demektir!
-                if veri and isinstance(veri, list) and len(veri) > 0:
-                    print(f"✅ TEFAS Verisi Başarıyla Çekildi. Kullanılan Tarih: {hedef_tarih}")
-                    return veri
-        except Exception as e:
-            print(f"⚠️ {hedef_tarih} tarihi denenirken hata oluştu: {str(e)}")
-            continue
-            
+    try:
+        # Önce TEFAS ana sayfasına girip bizi "insan" sanmalarını ve taze cookie vermelerini sağlıyoruz
+        session.get("https://www.tefas.gov.tr/fon-getirileri", headers=headers, timeout=10)
+    except:
+        pass
+
+    # 2. AŞAMA: Senin Deşifre Ettiğin Payload (Veri Yükü)
+    payload = {
+        "calismaTipi": 2,
+        "dil": "TR",
+        "fonTipi": "YAT",
+        "islem": 1,
+        "donemGetiri1a": "1",
+        "donemGetiri1y": "1",
+        "donemGetiri3a": "1",
+        "donemGetiri3y": "1",
+        "donemGetiri5y": "1",
+        "donemGetiri6a": "1",
+        "donemGetiriyb": "1",
+        "fonGrubu": None,
+        "fonTurAciklama": None,
+        "fonTurKod": None,
+        "kurucuKodu": None,
+        "sfonTurKod": None,
+        "basTarih": None,
+        "bitTarih": None
+    }
+
+    # API'ye özel istek başlıkları (İşte bütün sır buradaki Content-Type ayarında)
+    api_headers = {
+        "User-Agent": headers["User-Agent"],
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json", # Eski kodda bu yoktu, sistem bizi bu yüzden reddetti!
+        "X-Requested-With": "XMLHttpRequest",
+        "Origin": "https://www.tefas.gov.tr",
+        "Referer": "https://www.tefas.gov.tr/fon-getirileri"
+    }
+
+    try:
+        # Eski koddaki 'data=payload' kısmını 'json=payload' yaptık. TEFAS'ın istediği dil bu.
+        res = session.post(TEFAS_API_URL, json=payload, headers=api_headers, timeout=15)
+        if res.status_code == 200:
+            return res.json()
+    except Exception as e:
+        print("API Hatası:", e)
     return None
 
 @app.route('/')
 def home():
-    return "Karargah Akıllı TEFAS API Servisi Canlı!"
+    return "Karargah Akıllı TEFAS API Servisi (Hayalet Mod) Canlı!"
 
 @app.route('/toplu_fiyat')
 def get_toplu_fiyat():
@@ -60,10 +77,9 @@ def get_toplu_fiyat():
     kod_listesi = [k.strip() for k in kodlar_str.split(',') if k.strip()]
     sonuclar = {kod: 0 for kod in kod_listesi}
     
-    tefas_response = get_tefas_data()
-    
-    if tefas_response:
-        for fon in tefas_response:
+    veri = get_tefas_data()
+    if veri and isinstance(veri, list):
+        for fon in veri:
             fon_kodu = fon.get("FONKODU", "").upper().strip()
             if fon_kodu in sonuclar:
                 try:
@@ -82,14 +98,14 @@ def get_toplu_degisim():
     kod_listesi = [k.strip() for k in kodlar_str.split(',') if k.strip()]
     sonuclar = {kod: 0.0 for kod in kod_listesi}
     
-    tefas_response = get_tefas_data()
-    
-    if tefas_response:
-        for fon in tefas_response:
+    veri = get_tefas_data()
+    if veri and isinstance(veri, list):
+        for fon in veri:
             fon_kodu = fon.get("FONKODU", "").upper().strip()
             if fon_kodu in sonuclar:
                 try:
-                    degisim_str = str(fon.get("GUNLUKGETIRI", "0")).replace(",", ".")
+                    # Günlük getiri anahtarını garantilemek için iki olasılığı da ekledik
+                    degisim_str = str(fon.get("GUNLUKGETIRI", fon.get("GETIRI1G", "0"))).replace(",", ".")
                     sonuclar[fon_kodu] = float(degisim_str) / 100
                 except:
                     sonuclar[fon_kodu] = 0.0
