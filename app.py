@@ -4,39 +4,40 @@ from datetime import datetime, timedelta
 from pytefas import Crawler
 
 app = Flask(__name__)
-# Yeni nesil hafif tarayıcımızı başlatıyoruz
 tefas_crawler = Crawler()
 
 def get_pytefas_data(kodlar):
     bugun = datetime.now()
-    # Hafta sonu boşluğunu atlamak için son 5 günü tarıyoruz
-    baslangic = (bugun - timedelta(days=5)).strftime("%Y-%m-%d")
+    # Değişimi hesaplamak için dünün de verisine ihtiyacımız var, hafta sonlarını atlamak için 7 gün çekiyoruz
+    baslangic = (bugun - timedelta(days=7)).strftime("%Y-%m-%d")
     bitis = bugun.strftime("%Y-%m-%d")
     
     sonuclar_fiyat = {}
     sonuclar_degisim = {}
     
     try:
-        # Tek hamlede veriyi yapısal JSON olarak çekiyoruz (Chrome gerektirmez!)
         df = tefas_crawler.fetch(start=baslangic, end=bitis, kind="YAT")
         
         if df is not None and not df.empty:
-            # Tarihe göre sırala ki en yeni veri en sona gelsin
             df = df.sort_values(by='date', ascending=True)
             
             for kod in kodlar:
-                # Sadece istediğimiz fonun satırlarını filtrele
                 fon_df = df[df['fund_code'] == kod]
                 if not fon_df.empty:
-                    # En son günün verisini al
-                    son_kayit = fon_df.iloc[-1]
-                    sonuclar_fiyat[kod] = float(son_kayit['price'])
+                    # 1. Aşama: En güncel fiyatı çekiyoruz
+                    son_fiyat = float(fon_df.iloc[-1]['price'])
+                    sonuclar_fiyat[kod] = son_fiyat
                     
-                    # Eğer pytefas günlük getiriyi doğrudan vermiyorsa, 
-                    # manuel hesaplama gerektirebilir ama şimdilik fiyatı garantileyelim.
-                    # (pytefas 'info' kolonlarında price dönüyor, degisim için ekstra işlem gerekebilir)
-                    # Şimdilik değişimi 0 dönelim, fiyatın çalışıp çalışmadığını test edelim.
-                    sonuclar_degisim[kod] = 0.0 
+                    # 2. Aşama: Değişim Hesabı (Eğer en az 2 günlük veri varsa hesaplar)
+                    if len(fon_df) >= 2:
+                        onceki_fiyat = float(fon_df.iloc[-2]['price'])
+                        if onceki_fiyat > 0:
+                            degisim = (son_fiyat - onceki_fiyat) / onceki_fiyat
+                            sonuclar_degisim[kod] = degisim
+                        else:
+                            sonuclar_degisim[kod] = 0.0
+                    else:
+                        sonuclar_degisim[kod] = 0.0
                 else:
                     sonuclar_fiyat[kod] = 0.0
                     sonuclar_degisim[kod] = 0.0
@@ -55,14 +56,13 @@ def get_pytefas_data(kodlar):
 
 @app.route('/')
 def home():
-    return "Karargah V5.0 (PyTefas Modülü) Çevrimiçi!"
+    return "Karargah V5.1 (PyTefas Tam Sürüm) Çevrimiçi!"
 
 @app.route('/toplu_fiyat')
 def get_toplu_fiyat():
     kodlar_str = request.args.get('kodlar', '').upper()
     if not kodlar_str: return jsonify({})
     kod_listesi = [k.strip() for k in kodlar_str.split(',') if k.strip()]
-    
     fiyatlar, _ = get_pytefas_data(kod_listesi)
     return jsonify(fiyatlar)
 
@@ -71,7 +71,6 @@ def get_toplu_degisim():
     kodlar_str = request.args.get('kodlar', '').upper()
     if not kodlar_str: return jsonify({})
     kod_listesi = [k.strip() for k in kodlar_str.split(',') if k.strip()]
-    
     _, degisimler = get_pytefas_data(kod_listesi)
     return jsonify(degisimler)
 
