@@ -5,45 +5,52 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# TEFAS'ın resmi API servis adresi
 TEFAS_API_URL = "https://www.tefas.gov.tr/api/funds/fonGnlBlgSiraliGetir"
 
 def get_tefas_data():
     """
-    TEFAS resmi API'sinden tüm aktif fonların anlık fiyat 
-    ve getiri bilgilerini tek seferde çeker.
+    TEFAS resmi API'sinden veri çeker. 
+    Eğer bugün için veri yoksa (hafta sonu/akşam saatleri), 
+    en son geçerli güne kadar geriye doğru tarar.
     """
-    bugun = datetime.now().strftime("%Y-%m-%d")
-    
-    # TEFAS API'sinin beklediği zorunlu parametreler
-    payload = {
-        "islemDurum": "1",          # Aktif işlem gören fonlar
-        "tarih": bugun,             # Güncel tarih
-        "fonTipi": "YAT",           # Yatırım fonları (YAT / EMK / BYF)
-        "fonturId": "",
-        "baskaFonKodu": ""
-    }
-    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Origin": "https://www.tefas.gov.tr",
-        "Referer": "https://www.tefas.gov.tr/"
+        "Referer": "https://www.tefas.gov.tr/",
+        "X-Requested-With": "XMLHttpRequest"
     }
     
-    try:
-        # TEFAS sunucularına doğrudan güvenli bağlantı isteği atıyoruz
-        res = requests.post(TEFAS_API_URL, data=payload, headers=headers, timeout=15)
-        if res.status_code == 200:
-            return res.json()
-    except Exception as e:
-        print(f"TEFAS API Bağlantı Hatası: {str(e)}")
-        return None
+    # Bugün dahil son 5 günü kontrol et (Hafta sonları ve tatiller için koruma)
+    for i in range(5):
+        hedef_tarih = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+        
+        payload = {
+            "islemDurum": "1",
+            "tarih": hedef_tarih,
+            "fonTipi": "YAT",
+            "fonturId": "",
+            "baskaFonKodu": ""
+        }
+        
+        try:
+            # Hem data (Form-URLencoded) hem json olarak TEFAS'ın esnekliğine uyması için gönderiyoruz
+            res = requests.post(TEFAS_API_URL, data=payload, headers=headers, timeout=10)
+            if res.status_code == 200:
+                veri = res.json()
+                # Eğer gelen liste boş değilse, geçerli veriyi bulduk demektir!
+                if veri and isinstance(veri, list) and len(veri) > 0:
+                    print(f"✅ TEFAS Verisi Başarıyla Çekildi. Kullanılan Tarih: {hedef_tarih}")
+                    return veri
+        except Exception as e:
+            print(f"⚠️ {hedef_tarih} tarihi denenirken hata oluştu: {str(e)}")
+            continue
+            
     return None
 
 @app.route('/')
 def home():
-    return "Karargah Resmi TEFAS API Servisi Canlı!"
+    return "Karargah Akıllı TEFAS API Servisi Canlı!"
 
 @app.route('/toplu_fiyat')
 def get_toplu_fiyat():
@@ -55,13 +62,11 @@ def get_toplu_fiyat():
     
     tefas_response = get_tefas_data()
     
-    # TEFAS verisi geldiyse içinden bizim fonları ayıklıyoruz
-    if tefas_response and isinstance(tefas_response, list):
+    if tefas_response:
         for fon in tefas_response:
             fon_kodu = fon.get("FONKODU", "").upper().strip()
             if fon_kodu in sonuclar:
                 try:
-                    # Virgüllü gelebilecek fiyatı float sayıya çeviriyoruz
                     fiyat_str = str(fon.get("FIYAT", "0")).replace(",", ".")
                     sonuclar[fon_kodu] = float(fiyat_str)
                 except:
@@ -79,12 +84,11 @@ def get_toplu_degisim():
     
     tefas_response = get_tefas_data()
     
-    if tefas_response and isinstance(tefas_response, list):
+    if tefas_response:
         for fon in tefas_response:
             fon_kodu = fon.get("FONKODU", "").upper().strip()
             if fon_kodu in sonuclar:
                 try:
-                    # Günlük getiri oranını alıp Google Sheets formatına (%0.00) uyduruyoruz
                     degisim_str = str(fon.get("GUNLUKGETIRI", "0")).replace(",", ".")
                     sonuclar[fon_kodu] = float(degisim_str) / 100
                 except:
